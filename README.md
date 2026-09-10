@@ -19,7 +19,7 @@ with leakage-safe cross-validation.
 Python 3.9 or newer is recommended. Install the Python dependencies with:
 
 ```bash
-python -m pip install numpy pandas scikit-learn matplotlib plotly dash kaleido
+python -m pip install -r requirements.txt
 ```
 
 The applications use Tkinter to show the sample-selection dialog. On Debian or
@@ -60,7 +60,10 @@ Run:
 python pls_evaluate_targets.py
 ```
 
-The evaluator tests the configured targets:
+The evaluator first opens the same sample-selection dialog used by the
+dashboard. There is no separate "number of samples" setting: you choose the
+subset directly by selecting the sample IDs to include. It then tests the
+configured targets:
 
 - MCR [wt %]
 - O [wt %]
@@ -71,9 +74,10 @@ The evaluator tests the configured targets:
 
 It performs leakage-safe cross-validation, selects the best tested latent
 variable count by cross-validated R² and RMSE, and writes results to
-`pls_evaluation_outputs/`. During the run it asks which single latent-variable
-count should be used for the final summary, then starts the Dash dashboard on
-port 8051.
+`pls_evaluation_outputs/`. The saved prediction figures include both calibration
+and cross-validation R² values in the plot title. During the run it asks which
+single latent-variable count should be used for the final summary, then starts
+the Dash dashboard on port 8051.
 
 Typical outputs include:
 
@@ -98,18 +102,24 @@ Model quality should be judged primarily with cross-validated metrics, not
 calibration metrics. The scripts use a fixed random state of 42 for shuffled
 K-fold validation to make runs reproducible.
 
-## Clean v1 tools
+## Alternative v1 scripts
 
-The `*_v1.py` scripts are the cleaned implementation. The original scripts are
-preserved for comparison. The v1 tools use shared, import-safe utilities and
-command-line configuration:
+The repository also includes cleaned `*_v1.py` variants of the workflow:
 
 ```bash
 python pls_evaluate_targets_v1.py --output-dir pls_evaluation_outputs_v1
-python pls_dashboard_interactive_metadata_v1.py --port 8051
+python pls_dashboard_interactive_metadata_v1.py
 pytest -q
 ```
 
-Use `--data`, `--metadata`, `--samples`, and `--output-dir` to work with
-different files or subsets. The evaluator reports failed model configurations
-instead of silently discarding them.
+- `pls_dashboard_interactive_metadata_v1.py` keeps the original dashboard
+  functions and the same app layout/appearance.
+- `pls_evaluate_targets_v1.py` keeps the original evaluation logic and outputs,
+  but removes the embedded dashboard launch so it only performs the target
+  evaluation workflow.
+- `hyprofuel_v1.py` contains shared loading and utility helpers used by the v1
+  scripts.
+
+`pls_evaluate_targets_v1.py` accepts `--data`, `--metadata`, `--samples`,
+`--output-dir`, `--max-lv`, and `--lv` so you can reuse the workflow with
+different files or subsets while keeping the original evaluation behavior.

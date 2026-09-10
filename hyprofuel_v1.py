@@ -28,6 +28,21 @@ class ProjectData:
     feature_metadata: pd.DataFrame
 
 
+@dataclass
+class OriginalWorkflowData:
+    """Loaded state for the original dashboard and evaluator workflow."""
+
+    filtered_data: pd.DataFrame
+    filtered_metadata: pd.DataFrame
+    sample_column: str
+    numeric_metadata_columns: list[str]
+    feature_metadata: dict[str, pd.Series]
+    formula_array: np.ndarray
+    dbe_array: np.ndarray
+    ocount_array: np.ndarray
+    vk_lookup: dict[str, tuple[float, float, str, float, float]]
+
+
 def _find_sample_column(metadata: pd.DataFrame) -> str:
     for name in ("Sample", "sample", "ID", "id", "Name"):
         if name in metadata.columns:
@@ -67,6 +82,20 @@ def load_project_data(data_path: str | Path, metadata_path: str | Path) -> Proje
                        feature_metadata=feature_metadata.loc[X.columns])
 
 
+def extract_feature_metadata_columns(raw_features: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+    """Split positional feature metadata columns from the raw feature table."""
+    data = raw_features.copy()
+    arrays: dict[str, np.ndarray] = {}
+    for column in ("DBE", "O count", "Sum formula"):
+        matches = [name for name in data.columns if name.strip().lower() == column.lower()]
+        if matches:
+            arrays[column] = data[matches[0]].to_numpy(copy=True)
+            data = data.drop(columns=[matches[0]])
+        else:
+            arrays[column] = np.full(len(data), np.nan, dtype=object)
+    return data, arrays
+
+
 def select_samples(project: ProjectData, samples: Sequence[str] | None) -> ProjectData:
     """Return a project restricted to requested sample IDs."""
     if not samples:
@@ -77,6 +106,231 @@ def select_samples(project: ProjectData, samples: Sequence[str] | None) -> Proje
         raise ValueError("None of the requested samples were found.")
     metadata = project.metadata[project.metadata[project.sample_column].isin(selected)].copy()
     return ProjectData(project.X.loc[selected], metadata, project.sample_column, project.feature_metadata)
+
+
+def to_float_array(values) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    for index, value in enumerate(values):
+        try:
+            output[index] = float(value)
+        except (TypeError, ValueError):
+            pass
+    return output
+
+
+def sanity_check_orientation_and_alignment(filtered_data: pd.DataFrame, filtered_metadata: pd.DataFrame,
+                                           sample_column: str) -> None:
+    print("\n=== SANITY CHECK ===")
+    print(f"Raw feature table shape (features x samples): {filtered_data.shape}")
+    X_check = (filtered_data.apply(pd.to_numeric, errors="coerce")
+               .dropna(axis=0, how="all")
+               .dropna(axis=1, how="all")
+               .T)
+    print(f"Model matrix shape after transpose (samples x features): {X_check.shape}")
+    print(f"Number of samples: {X_check.shape[0]}")
+    print(f"Number of features: {X_check.shape[1]}")
+
+    meta_ids = filtered_metadata[sample_column].astype(str).str.strip().tolist()
+    x_ids = X_check.index.astype(str).str.strip().tolist()
+    common = set(x_ids).intersection(set(meta_ids))
+    print(f"Samples in X: {len(x_ids)}")
+    print(f"Samples in metadata: {len(meta_ids)}")
+    print(f"Overlapping samples: {len(common)}")
+
+    missing_in_meta = sorted(set(x_ids) - set(meta_ids))
+    missing_in_x = sorted(set(meta_ids) - set(x_ids))
+    if missing_in_meta:
+        print(f"Warning: {len(missing_in_meta)} sample(s) in X not found in metadata.")
+    if missing_in_x:
+        print(f"Warning: {len(missing_in_x)} sample(s) in metadata not found in X.")
+    if not missing_in_meta and not missing_in_x:
+        print("Sample labels match between X and metadata.")
+    if X_check.shape[0] != len(common):
+        print("Note: some samples will be dropped during alignment.")
+    print("====================\n")
+
+
+def select_samples_popup(sample_names, title="Select samples to include",
+                         default_select_all=True):
+    import tkinter as tk
+    from tkinter import ttk
+
+    sample_names = list(sample_names)
+    selected = set(sample_names) if default_select_all else set()
+    root = tk.Tk()
+    root.title(title)
+    root.geometry("520x600")
+    search_var = tk.StringVar()
+
+    ttk.Label(root, text="Filter:").pack(anchor="w", padx=10, pady=(10, 0))
+    ttk.Entry(root, textvariable=search_var).pack(fill="x", padx=10)
+
+    frame = ttk.Frame(root)
+    frame.pack(fill="both", expand=True, padx=10, pady=10)
+    scrollbar = ttk.Scrollbar(frame, orient="vertical")
+    listbox = tk.Listbox(frame, selectmode=tk.MULTIPLE, yscrollcommand=scrollbar.set)
+    scrollbar.config(command=listbox.yview)
+    scrollbar.pack(side="right", fill="y")
+    listbox.pack(side="left", fill="both", expand=True)
+
+    def refresh_list():
+        listbox.delete(0, tk.END)
+        filt = search_var.get().strip().lower()
+        for sample in sample_names:
+            if (not filt) or (filt in sample.lower()):
+                listbox.insert(tk.END, sample)
+        for i in range(listbox.size()):
+            if listbox.get(i) in selected:
+                listbox.selection_set(i)
+
+    def select_all():
+        nonlocal selected
+        selected = set(sample_names)
+        refresh_list()
+
+    def select_none():
+        nonlocal selected
+        selected = set()
+        refresh_list()
+
+    search_var.trace_add("write", lambda *_: refresh_list())
+    button_frame = ttk.Frame(root)
+    button_frame.pack(fill="x", padx=10, pady=(0, 10))
+    ttk.Button(button_frame, text="Select all", command=select_all).pack(side="left")
+    ttk.Button(button_frame, text="Select none", command=select_none).pack(side="left", padx=(10, 0))
+    result = {"samples": None}
+
+    def on_ok():
+        visible = [listbox.get(i) for i in range(listbox.size())]
+        current_selected = set(listbox.get(i) for i in listbox.curselection())
+        nonlocal selected
+        selected = (selected - set(visible)) | current_selected
+        result["samples"] = sorted(selected)
+        root.destroy()
+
+    def on_cancel():
+        result["samples"] = sample_names
+        root.destroy()
+
+    ttk.Button(button_frame, text="OK (start app)", command=on_ok).pack(side="right")
+    ttk.Button(button_frame, text="Cancel (include all)", command=on_cancel).pack(side="right", padx=(0, 10))
+    root.protocol("WM_DELETE_WINDOW", on_cancel)
+    refresh_list()
+    root.mainloop()
+    return result["samples"]
+
+
+def _select_requested_samples(sample_names: list[str], samples: Sequence[str] | None) -> list[str]:
+    if not samples:
+        return sample_names
+    requested = {str(sample).strip() for sample in samples}
+    selected = [sample for sample in sample_names if sample in requested]
+    if not selected:
+        raise ValueError("None of the requested samples were found.")
+    return selected
+
+
+def _aligned_feature_positions(original_index: Sequence[str], filtered_index: Sequence[str]) -> np.ndarray:
+    positions_by_name: dict[str, list[int]] = {}
+    for position, name in enumerate(original_index):
+        positions_by_name.setdefault(str(name), []).append(position)
+    seen: dict[str, int] = {}
+    resolved_positions = []
+    for feature in filtered_index:
+        feature_name = str(feature)
+        count = seen.get(feature_name, 0)
+        positions = positions_by_name[feature_name]
+        resolved_positions.append(positions[count] if count < len(positions) else positions[-1])
+        seen[feature_name] = count + 1
+    return np.asarray(resolved_positions, dtype=int)
+
+
+def load_original_workflow_data(data_path: str | Path, metadata_path: str | Path,
+                                samples: Sequence[str] | None = None, *,
+                                use_popup: bool = False,
+                                popup_title: str = "PLS Dashboard – Select samples to include (default: all)",
+                                default_select_all: bool = True,
+                                run_sanity_check: bool = True) -> OriginalWorkflowData:
+    """Load data as expected by the original dashboard and evaluator scripts."""
+    raw_features = pd.read_csv(data_path, index_col=0)
+    metadata = pd.read_csv(metadata_path)
+    print(f"Raw data shape: {raw_features.shape}  |  index unique: {raw_features.index.is_unique}")
+
+    data, feature_arrays = extract_feature_metadata_columns(raw_features)
+    for column in ("DBE", "O count", "Sum formula"):
+        matches = [name for name in raw_features.columns if name.strip().lower() == column.lower()]
+        if matches:
+            print(f"  Extracted '{matches[0]}' → '{column}'")
+        else:
+            print(f"  Warning: '{column}' not found.")
+
+    sample_column = _find_sample_column(metadata)
+    metadata = metadata.copy()
+    metadata[sample_column] = metadata[sample_column].astype(str).str.strip()
+    data.index = data.index.astype(str).str.strip()
+    data.columns = data.columns.astype(str).str.strip()
+
+    valid_samples = set(metadata[sample_column])
+    filtered_data = data.loc[:, data.columns.isin(valid_samples)]
+    filtered_metadata = metadata[metadata[sample_column].isin(filtered_data.columns)].copy()
+    if run_sanity_check:
+        sanity_check_orientation_and_alignment(filtered_data, filtered_metadata, sample_column)
+
+    all_samples = list(filtered_data.columns)
+    chosen_samples = (select_samples_popup(all_samples, title=popup_title,
+                                          default_select_all=default_select_all)
+                      if use_popup else _select_requested_samples(all_samples, samples))
+    chosen_set = set(chosen_samples)
+    filtered_data = filtered_data.loc[:, filtered_data.columns.isin(chosen_set)]
+    filtered_metadata = filtered_metadata[filtered_metadata[sample_column].isin(chosen_set)].copy()
+    print(f"Selected {filtered_data.shape[1]} / {len(all_samples)} samples.")
+
+    numeric_metadata_columns = []
+    for column in [name for name in filtered_metadata.columns if name != sample_column]:
+        try:
+            pd.to_numeric(filtered_metadata[column], errors="raise")
+            numeric_metadata_columns.append(column)
+        except Exception:
+            pass
+    print(f"Found {len(numeric_metadata_columns)} numeric metadata columns for Y variables")
+
+    dbe_array = to_float_array(feature_arrays["DBE"])
+    ocount_array = to_float_array(feature_arrays["O count"])
+    formula_array = feature_arrays["Sum formula"]
+    positions = _aligned_feature_positions(list(data.index), list(filtered_data.index))
+    aligned_dbe = dbe_array[positions]
+    aligned_ocount = ocount_array[positions]
+    aligned_formula = formula_array[positions]
+    print("Computing H/C and O/C for all features …")
+    hc_values, oc_values = compute_hc_oc(aligned_formula, aligned_dbe, aligned_ocount)
+    vk_lookup = {}
+    for i, feature_name in enumerate(filtered_data.index.astype(str)):
+        if feature_name not in vk_lookup:
+            vk_lookup[feature_name] = (
+                hc_values[i],
+                oc_values[i],
+                str(aligned_formula[i]),
+                aligned_dbe[i],
+                aligned_ocount[i],
+            )
+    n_valid_vk = sum(1 for value in vk_lookup.values() if not np.isnan(value[0]))
+    print(f"  {n_valid_vk} / {len(vk_lookup)} unique features with valid H/C & O/C")
+
+    feature_metadata = {
+        column: pd.Series(feature_arrays[column], index=data.index)
+        for column in ("DBE", "O count")
+    }
+    return OriginalWorkflowData(
+        filtered_data=filtered_data,
+        filtered_metadata=filtered_metadata,
+        sample_column=sample_column,
+        numeric_metadata_columns=numeric_metadata_columns,
+        feature_metadata=feature_metadata,
+        formula_array=aligned_formula,
+        dbe_array=aligned_dbe,
+        ocount_array=aligned_ocount,
+        vk_lookup=vk_lookup,
+    )
 
 
 def make_scaler(method: str):
@@ -197,12 +451,34 @@ def parse_formula(formula) -> tuple[float, float, float]:
     return float(carbon), float(counts.get("H", np.nan)), float(counts.get("O", 0))
 
 
-def compute_hc_oc(feature_metadata: pd.DataFrame) -> pd.DataFrame:
-    result = pd.DataFrame(index=feature_metadata.index, columns=["H/C", "O/C"], dtype=float)
-    for feature, row in feature_metadata.iterrows():
-        carbon, hydrogen, oxygen = parse_formula(row.get("Sum formula"))
-        if not pd.isna(carbon):
-            result.loc[feature] = [hydrogen / carbon, oxygen / carbon]
-        elif not pd.isna(row.get("DBE")) and not pd.isna(row.get("O count")):
-            result.loc[feature] = [2 * (2 - float(row["DBE"])), float(row["O count"])]
-    return result
+def compute_hc_oc(feature_metadata, dbe_array=None, ocount_array=None):
+    if isinstance(feature_metadata, pd.DataFrame):
+        result = pd.DataFrame(index=feature_metadata.index, columns=["H/C", "O/C"], dtype=float)
+        for feature, row in feature_metadata.iterrows():
+            carbon, hydrogen, oxygen = parse_formula(row.get("Sum formula"))
+            if not pd.isna(carbon):
+                result.loc[feature] = [hydrogen / carbon, oxygen / carbon]
+            elif not pd.isna(row.get("DBE")) and not pd.isna(row.get("O count")):
+                result.loc[feature] = [2 * (2 - float(row["DBE"])), float(row["O count"])]
+        return result
+
+    formula_array = feature_metadata
+    hc = np.full(len(formula_array), np.nan, dtype=float)
+    oc = np.full(len(formula_array), np.nan, dtype=float)
+    for index, formula in enumerate(formula_array):
+        if formula is not None and not (isinstance(formula, float) and np.isnan(formula)):
+            formula_string = str(formula).strip()
+            if formula_string and formula_string.lower() not in ("nan", "none", ""):
+                carbon, hydrogen, oxygen = parse_formula(formula_string)
+                if not np.isnan(carbon) and carbon > 0:
+                    hc[index] = hydrogen / carbon
+                    oc[index] = oxygen / carbon
+                    continue
+        dbe = dbe_array[index]
+        oxygen_count = ocount_array[index]
+        if not (np.isnan(dbe) or np.isnan(oxygen_count)):
+            hydrogen_relative = 2.0 * (2.0 - float(dbe))
+            if hydrogen_relative >= 0:
+                hc[index] = hydrogen_relative
+                oc[index] = float(oxygen_count)
+    return hc, oc
