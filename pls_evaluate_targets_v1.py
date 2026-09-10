@@ -34,10 +34,6 @@ def safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
 
 
-def prediction_title(target: str, r2_cal: float, r2_cv: float) -> str:
-    return f"{target}\nR2Cal={r2_cal:.3f} | R2CV={r2_cv:.3f}"
-
-
 def evaluate_target(project, target: str, output_dir: Path, max_components: int = 4):
     if target not in project.metadata.columns:
         return {"Target": target, "Modelable": "No", "Reason": "Target column missing"}
@@ -82,11 +78,7 @@ def evaluate_target(project, target: str, output_dir: Path, max_components: int 
     axis.scatter(best["actual"][mask], best["cv"][mask], label="Cross-validation", marker="^")
     bounds = np.concatenate([best["actual"], best["predicted"], best["cv"][mask]])
     axis.plot([bounds.min(), bounds.max()], [bounds.min(), bounds.max()], "k--")
-    axis.set(
-        xlabel="Actual",
-        ylabel="Predicted",
-        title=prediction_title(target, trial["R2 cal"], trial["R2 CV"]),
-    )
+    axis.set(xlabel="Actual", ylabel="Predicted", title=target)
     axis.legend()
     figure.tight_layout()
     figure.savefig(figure_path, dpi=300)
