@@ -97,3 +97,19 @@ matched between the two files before modeling.
 Model quality should be judged primarily with cross-validated metrics, not
 calibration metrics. The scripts use a fixed random state of 42 for shuffled
 K-fold validation to make runs reproducible.
+
+## Clean v1 tools
+
+The `*_v1.py` scripts are the cleaned implementation. The original scripts are
+preserved for comparison. The v1 tools use shared, import-safe utilities and
+command-line configuration:
+
+```bash
+python pls_evaluate_targets_v1.py --output-dir pls_evaluation_outputs_v1
+python pls_dashboard_interactive_metadata_v1.py --port 8051
+pytest -q
+```
+
+Use `--data`, `--metadata`, `--samples`, and `--output-dir` to work with
+different files or subsets. The evaluator reports failed model configurations
+instead of silently discarding them.
