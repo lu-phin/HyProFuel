@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from hyprofuel_v1 import compute_hc_oc, load_project_data, parse_formula, transform_array
+from pls_evaluate_targets_v1 import prediction_title
 
 
 def test_parse_formula_and_van_krevelen_coordinates():
@@ -29,3 +30,7 @@ def test_load_project_data_aligns_samples(tmp_path):
 def test_nonnegative_transforms_are_finite():
     values = np.array([[0.0, 3.0]])
     assert np.isfinite(transform_array(values, "log10")).all()
+
+
+def test_prediction_title_includes_r2_values():
+    assert prediction_title("Target A", 0.91234, 0.85678) == "Target A\nR2Cal=0.912 | R2CV=0.857"
