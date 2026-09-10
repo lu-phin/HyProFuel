@@ -104,15 +104,22 @@ K-fold validation to make runs reproducible.
 
 ## Alternative v1 scripts
 
-The repository also includes `*_v1.py` scripts as a more compact,
-command-line-oriented variant of the workflow:
+The repository also includes cleaned `*_v1.py` variants of the workflow:
 
 ```bash
 python pls_evaluate_targets_v1.py --output-dir pls_evaluation_outputs_v1
-python pls_dashboard_interactive_metadata_v1.py --port 8051
+python pls_dashboard_interactive_metadata_v1.py
 pytest -q
 ```
 
-Use `--data`, `--metadata`, `--samples`, and `--output-dir` to work with
-different files or subsets. These scripts are available if you want a simpler
-entry point, but the main README workflow above describes the original tools.
+- `pls_dashboard_interactive_metadata_v1.py` keeps the original dashboard
+  functions and the same app layout/appearance.
+- `pls_evaluate_targets_v1.py` keeps the original evaluation logic and outputs,
+  but removes the embedded dashboard launch so it only performs the target
+  evaluation workflow.
+- `hyprofuel_v1.py` contains shared loading and utility helpers used by the v1
+  scripts.
+
+`pls_evaluate_targets_v1.py` accepts `--data`, `--metadata`, `--samples`,
+`--output-dir`, `--max-lv`, and `--lv` so you can reuse the workflow with
+different files or subsets while keeping the original evaluation behavior.
